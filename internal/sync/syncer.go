@@ -58,8 +58,9 @@ func (s *Syncer) Run(ctx context.Context, emailFilter string) (Result, error) {
 	}
 	slog.Info("fetched members", "count", len(members))
 
-	// 3. Optionally add outside collaborators (org mode only).
-	if s.config.IncludeOutsideCollaborators && s.config.Mode == "organization" {
+	// 3. Optionally add outside collaborators.
+	// Works in organization mode and in enterprise mode when github.organizations is set.
+	if s.config.IncludeOutsideCollaborators {
 		slog.Info("fetching outside collaborators")
 		collabs, err := s.gh.ListOutsideCollaborators(ctx)
 		if err != nil {
@@ -69,8 +70,9 @@ func (s *Syncer) Run(ctx context.Context, emailFilter string) (Result, error) {
 		members = append(members, collabs...)
 	}
 
-	// 4. Optionally add pending invitations (org mode only).
-	if s.config.IncludePendingInvitations && s.config.Mode == "organization" {
+	// 4. Optionally add pending invitations.
+	// Works in organization mode and in enterprise mode when github.organizations is set.
+	if s.config.IncludePendingInvitations {
 		slog.Info("fetching pending invitations")
 		pending, err := s.gh.ListPendingInvitations(ctx)
 		if err != nil {

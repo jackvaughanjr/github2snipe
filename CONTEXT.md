@@ -31,20 +31,30 @@ Create a PAT at GitHub → Settings → Developer Settings → Personal access t
 
 Required scopes and roles by mode:
 
-| Mode           | Required PAT scope  | Required GitHub role               |
-|----------------|---------------------|------------------------------------|
-| `enterprise`   | `admin:enterprise`  | Enterprise Owner                   |
-| `organization` | `read:org`          | Organization member (any role)     |
+| Mode                                  | Required PAT scope  | Required GitHub role               |
+|---------------------------------------|---------------------|------------------------------------|
+| `enterprise` (EMU)                    | `admin:enterprise`  | Enterprise Owner                   |
+| `enterprise` + `github.organizations` | `read:org`          | Organization member (any role)     |
+| `organization`                        | `read:org`          | Organization member (any role)     |
 
-**Enterprise mode requires `admin:enterprise`, not just `read:enterprise`.**
-`read:enterprise` only grants access to the enterprise's public profile data.
-Listing members requires `admin:enterprise` (which includes `read:enterprise` as
-a sub-scope). GitHub returns 404 (not 403) when the PAT lacks sufficient scope or
-when the user is not an enterprise owner — this is intentional security behaviour
-to avoid confirming the existence of enterprise resources.
+There are two enterprise mode paths with different requirements:
 
-Fine-grained PATs are supported. For enterprise mode, the fine-grained token needs
-the "Enterprise members: read" permission.
+**EMU (Enterprise Managed Users):** When `github.organizations` is empty, the integration
+calls the enterprise members API directly (`GET /enterprises/{slug}/members`). This only
+works for EMU tenants. Requires `admin:enterprise` scope and the PAT owner must be an
+Enterprise Owner. GitHub returns 404 (not 403) when the PAT lacks sufficient scope or
+the user is not an enterprise owner — intentional security behaviour to avoid confirming
+the existence of enterprise resources. Do not use `read:enterprise` — it only reads the
+enterprise public profile and cannot list members.
+
+**Traditional GHEC (non-EMU):** When `github.organizations` is set, the integration
+enumerates members from each listed organization and deduplicates by login. This is the
+correct path for traditional GitHub Enterprise Cloud accounts where users keep their
+personal GitHub accounts. Requires `read:org` scope only.
+
+Fine-grained PATs are supported. For EMU enterprise mode, the fine-grained token needs
+the "Enterprise members: read" permission. For the organizations-based path, use the
+standard `read:org` scope.
 
 Set the token in `settings.yaml` as `github.token` or via the `GITHUB_TOKEN`
 environment variable (this is the same env var used by GitHub Actions — convenient
@@ -64,6 +74,10 @@ if running this tool in a CI environment).
 
 ### Enterprise mode endpoints
 
+Enterprise mode supports two paths depending on your GitHub Enterprise Cloud type.
+
+**EMU (Enterprise Managed Users) — `github.organizations` not set:**
+
 | Purpose                     | Endpoint                                               |
 |-----------------------------|--------------------------------------------------------|
 | List members (role=member)  | `GET /enterprises/{enterprise}/members?role=member`    |
@@ -71,8 +85,21 @@ if running this tool in a CI environment).
 | User profile (email, name)  | `GET /users/{login}`                                   |
 
 Outside collaborators and pending invitations are **org-level** concepts and are not
-directly available via the enterprise API. In enterprise mode, only enterprise
-members are synced. Use organization mode to include collaborators.
+available via the enterprise members API. These features are not supported in the
+EMU path.
+
+**Traditional GHEC — `github.organizations` set:**
+
+| Purpose                     | Endpoint                                               |
+|-----------------------------|--------------------------------------------------------|
+| List members (role=member)  | `GET /orgs/{org}/members?role=member`                  |
+| List members (role=admin)   | `GET /orgs/{org}/members?role=admin`                   |
+| Outside collaborators       | `GET /orgs/{org}/outside_collaborators`                |
+| Pending invitations         | `GET /orgs/{org}/invitations`                          |
+| User profile (email, name)  | `GET /users/{login}`                                   |
+
+All endpoints are called for each org in `github.organizations`. Results are
+deduplicated by login across orgs.
 
 ### Organization mode endpoints
 
@@ -102,6 +129,17 @@ github:
   # GitHub Organization name (required when mode: organization).
   organization: "your-org-name"
 
+  # Organizations to enumerate in enterprise mode (traditional GHEC accounts).
+  # The enterprise members API only works for EMU tenants. Traditional GHEC accounts
+  # (where users keep their personal GitHub accounts) must list members via org APIs.
+  # Set this to the org slugs within your enterprise. Members are deduplicated across
+  # all listed orgs. Outside collaborators and pending invitations also enumerate
+  # across all listed orgs when enabled.
+  # Leave empty only if your enterprise uses EMU (Enterprise Managed Users).
+  # Has no effect when mode: organization.
+  organizations:
+    - "your-org-slug"
+
   # Personal Access Token (PAT).
   # Can be overridden with the GITHUB_TOKEN environment variable.
   token: ""
@@ -113,14 +151,14 @@ github:
   license_name_prefix: ""
   license_name_suffix: ""
 
-  # Include outside collaborators in the sync (organization mode only).
+  # Include outside collaborators in the sync.
+  # Works in organization mode and in enterprise mode when github.organizations is set.
   # Outside collaborators consume GitHub license seats.
-  # Has no effect in enterprise mode.
   include_outside_collaborators: false
 
-  # Include pending org membership invitations (organization mode only).
+  # Include pending org membership invitations.
+  # Works in organization mode and in enterprise mode when github.organizations is set.
   # Pending invitations consume GitHub license seats.
-  # Has no effect in enterprise mode.
   include_pending_invitations: false
 
 snipe_it:
@@ -325,9 +363,12 @@ a GitHub account yet. In this case:
    `role=admin` for org mode) — and assigns the role based on which call returned
    the user.
 
-5. **Enterprise mode has no outside-collaborator endpoint.** Outside collaborators
-   exist at the organization level. In enterprise mode, use organization mode to
-   track outside collaborators, or handle them manually.
+5. **Enterprise members API is EMU-only.** `GET /enterprises/{enterprise}/members`
+   only works for Enterprise Managed Users (EMU) tenants. Traditional GitHub Enterprise
+   Cloud accounts (where users keep their personal GitHub accounts) must enumerate
+   members via org APIs instead. Set `github.organizations` to the list of org slugs
+   within your enterprise to use the org-based path. Outside collaborators and pending
+   invitations are supported in both organization mode and enterprise+organizations mode.
 
 6. **Pending invitations are org membership invitations, not repo invitations.**
    `GET /orgs/{org}/invitations` returns pending invitations for org membership.

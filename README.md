@@ -26,7 +26,10 @@ automatically when they change.
 ## Requirements
 
 - Go 1.22+ (to build from source)
-- A GitHub Personal Access Token with `read:enterprise` (enterprise mode) or `read:org` (org mode)
+- A GitHub Personal Access Token — required scope depends on your GitHub Enterprise type:
+  - **Enterprise mode (EMU tenants):** `admin:enterprise` scope; PAT owner must be an Enterprise Owner
+  - **Enterprise mode (traditional GHEC):** `read:org` scope; set `github.organizations` in config
+  - **Organization mode:** `read:org` scope
 - A Snipe-IT instance with an API key that has license management permissions
 - GitHub users must have a **public email** set in their GitHub profile for matching to work
 
@@ -67,13 +70,30 @@ cp settings.example.yaml settings.yaml
 `settings.yaml` is gitignored and must never be committed. See `settings.example.yaml`
 for all available options with inline documentation.
 
-### Minimal configuration (enterprise mode)
+### Minimal configuration (enterprise mode — EMU tenants)
 
 ```yaml
 github:
   mode: "enterprise"
   enterprise: "your-enterprise-slug"
-  token: ""  # or set GITHUB_TOKEN env var
+  token: ""  # or set GITHUB_TOKEN env var; requires admin:enterprise scope
+
+snipe_it:
+  url: "https://your-snipe-it-instance.example.com"
+  api_key: ""
+  license_category_id: 0  # required
+```
+
+### Minimal configuration (enterprise mode — traditional GHEC)
+
+```yaml
+github:
+  mode: "enterprise"
+  enterprise: "your-enterprise-slug"
+  organizations:
+    - "your-org-slug"
+    # - "another-org-slug"
+  token: ""  # or set GITHUB_TOKEN env var; requires read:org scope
 
 snipe_it:
   url: "https://your-snipe-it-instance.example.com"
@@ -197,8 +217,8 @@ the member's role or type:
 
 ## Outside collaborators and pending invitations
 
-In organization mode, set the following in `settings.yaml` to include users
-who consume seats beyond direct org members:
+Set the following in `settings.yaml` to include users who consume seats beyond
+direct org members:
 
 ```yaml
 github:
@@ -206,8 +226,14 @@ github:
   include_pending_invitations: true     # users with pending org membership invitations
 ```
 
-Both are disabled by default. Has no effect in enterprise mode (outside collaborators
-are an org-level concept not exposed by the enterprise API).
+Both are disabled by default. Supported in:
+- **Organization mode** — queries the configured org directly.
+- **Enterprise mode with `github.organizations` set** — queries each configured org
+  and deduplicates across them.
+
+Not supported in EMU enterprise mode (where `github.organizations` is empty),
+because outside collaborators and pending invitations are org-level concepts not
+exposed by the enterprise members API.
 
 ---
 
@@ -215,9 +241,15 @@ are an org-level concept not exposed by the enterprise API).
 
 - **Private emails**: GitHub users with private email settings are skipped. Users
   must have a public email in their GitHub profile for the sync to process them.
-- **Enterprise mode and outside collaborators**: The GitHub Enterprise API does not
-  expose outside collaborators at the enterprise level. Use organization mode to
-  track outside collaborators.
+- **EMU vs traditional GHEC**: The enterprise members API (`GET /enterprises/{slug}/members`)
+  only works for EMU (Enterprise Managed Users) tenants. Traditional GitHub Enterprise
+  Cloud accounts must set `github.organizations` to enumerate members via org APIs.
+  Using the wrong path results in a 404 from GitHub (not 403 — this is GitHub's
+  intentional security behaviour).
+- **SAML SSO enforcement**: If your organization enforces SAML SSO, the PAT must be
+  explicitly SSO-authorized for each org in addition to having the correct scope. Go to
+  github.com/settings/tokens → click your token → "Configure SSO" → "Authorize" next
+  to the org. This must be repeated each time a new PAT is created.
 - **Rate limits**: The sync makes one additional API call per member to resolve email
   addresses. For large enterprises (1,000+ members), allow a few minutes for the
   enrichment phase before Snipe-IT writes begin.
