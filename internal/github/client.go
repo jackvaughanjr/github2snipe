@@ -109,11 +109,13 @@ func (c *Client) ValidateConnection(ctx context.Context) error {
 	case http.StatusUnauthorized:
 		return fmt.Errorf("github: invalid or missing token (401) — check github.token or GITHUB_TOKEN")
 	case http.StatusForbidden:
-		return fmt.Errorf("github: token lacks required scope (403): %s — ensure the PAT has %s scope",
+		return fmt.Errorf("github: access forbidden (403): %s — ensure the PAT has %s scope and the authenticated user is an enterprise owner",
 			apiErr.Message, c.requiredScope())
 	case http.StatusNotFound:
 		if c.mode == "enterprise" {
-			return fmt.Errorf("github: enterprise %q not found (404) — check the enterprise slug", c.enterprise)
+			return fmt.Errorf(
+				"github: enterprise %q returned 404 — GitHub returns 404 (not 403) when the slug is valid but the PAT user is not an enterprise owner; verify the user is listed at github.com/enterprises/%s/people and has the Owner role",
+				c.enterprise, c.enterprise)
 		}
 		return fmt.Errorf("github: organization %q not found (404) — check the org name", c.org)
 	default:

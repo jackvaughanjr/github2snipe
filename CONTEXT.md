@@ -29,14 +29,21 @@ Auth via a Personal Access Token (PAT).
 
 Create a PAT at GitHub → Settings → Developer Settings → Personal access tokens.
 
-Required scopes by mode:
+Required scopes and roles by mode:
 
-| Mode           | Required scope   |
-|----------------|------------------|
-| `enterprise`   | `read:enterprise` |
-| `organization` | `read:org`        |
+| Mode           | Required PAT scope | Required GitHub role               |
+|----------------|--------------------|------------------------------------|
+| `enterprise`   | `read:enterprise`  | Enterprise Owner                   |
+| `organization` | `read:org`         | Organization member (any role)     |
 
-Fine-grained PATs are supported but require the equivalent fine-grained permissions.
+**Enterprise mode requires the PAT user to be an enterprise owner.** GitHub returns
+404 (not 403) for the enterprise members API when the slug is valid but the user
+is not an enterprise owner — this is intentional GitHub security behaviour to avoid
+confirming the existence of enterprise resources. Verify ownership at:
+`github.com/enterprises/{slug}/people` → filter by role "Owner".
+
+Fine-grained PATs are supported. For enterprise mode, the fine-grained token needs
+the "Enterprise members: read" permission.
 
 Set the token in `settings.yaml` as `github.token` or via the `GITHUB_TOKEN`
 environment variable (this is the same env var used by GitHub Actions — convenient
