@@ -1,0 +1,16 @@
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+go.work
+go.work.sum
+.env
+settings.yaml
+*.json
+.cache/
+github2snipe
+.DS_Store
+CLAUDE.md

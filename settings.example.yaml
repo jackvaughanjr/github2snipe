@@ -1,0 +1,100 @@
+# github2snipe configuration
+# Copy this file to settings.yaml and fill in your values.
+# settings.yaml is gitignored and should never be committed.
+#
+# Environment variable overrides are listed in CONTEXT.md.
+
+github:
+  # Connection mode: "enterprise" or "organization"
+  #
+  #   enterprise   — sync all members of a GitHub Enterprise tenant.
+  #                  Requires a PAT with read:enterprise scope.
+  #   organization — sync members of a single GitHub Organization.
+  #                  Requires a PAT with read:org scope.
+  mode: "enterprise"
+
+  # GitHub Enterprise slug (required when mode: enterprise).
+  # This is the URL-safe identifier visible in enterprise URLs:
+  #   https://github.com/enterprises/<enterprise-slug>
+  enterprise: "your-enterprise-slug"
+
+  # GitHub Organization name (required when mode: organization).
+  # This is the org's login name, not its display name.
+  organization: "your-org-name"
+
+  # Personal Access Token (PAT).
+  # Can also be set via the GITHUB_TOKEN environment variable.
+  # Required scopes:
+  #   mode: enterprise   → read:enterprise
+  #   mode: organization → read:org
+  token: ""
+
+  # Optional: prefix and/or suffix to wrap around the default license name.
+  # Default license name:
+  #   mode: enterprise   → "GitHub Enterprise"
+  #   mode: organization → "GitHub"
+  # Final Snipe-IT license name: {prefix}{default_name}{suffix}
+  # Include any separator characters (spaces, dashes) in the values themselves.
+  # Examples:
+  #   prefix: "Acme - "  → "Acme - GitHub Enterprise"
+  #   suffix: " (acme)"  → "GitHub Enterprise (acme)"
+  license_name_prefix: ""
+  license_name_suffix: ""
+
+  # Include outside collaborators in the sync (organization mode only).
+  # Outside collaborators have access to specific org repos but are not org members.
+  # They consume GitHub license seats and will be added to Snipe-IT with
+  # type: outside_collaborator in their seat notes.
+  # Has no effect when mode: enterprise.
+  include_outside_collaborators: false
+
+  # Include pending org membership invitations (organization mode only).
+  # Pending invitations consume GitHub license seats.
+  # Pending users will be added to Snipe-IT with status: pending_invitation in notes.
+  # Has no effect when mode: enterprise.
+  include_pending_invitations: false
+
+snipe_it:
+  # Base URL of your Snipe-IT instance (no trailing slash).
+  url: "https://your-snipe-it-instance.example.com"
+
+  # Snipe-IT API key with license management permissions.
+  # Generate one at: Admin → API Keys
+  # Can also be set via the SNIPE_TOKEN environment variable.
+  api_key: ""
+
+  # Override the computed license name entirely. If set, license_name_prefix and
+  # license_name_suffix are ignored. Leave empty to use the computed name.
+  license_name: ""
+
+  # Snipe-IT category ID to assign to the license when created. Required.
+  # Find IDs at: Admin → Categories, or via the Snipe-IT API.
+  license_category_id: 0
+
+  # Optional: manufacturer ID for the GitHub license.
+  # If 0, a "GitHub" manufacturer is automatically found or created.
+  license_manufacturer_id: 0
+
+  # Optional: supplier ID. If 0, no supplier is set on the license.
+  license_supplier_id: 0
+
+sync:
+  # Simulate a full sync without making any changes.
+  # Overridden by the --dry-run flag.
+  dry_run: false
+
+  # Re-sync seat notes even if they appear up to date.
+  # Overridden by the --force flag.
+  force: false
+
+  # Automatically create Snipe-IT accounts for GitHub users not already in Snipe-IT.
+  # Without this, unmatched users are warned and skipped.
+  # Overridden by the --create-users flag.
+  # Requires GitHub users to have a public email set in their GitHub profile.
+  create_users: false
+
+slack:
+  # Incoming webhook URL for Slack notifications.
+  # Optional. If omitted, all notifications are silently skipped.
+  # Can be overridden with the SLACK_WEBHOOK environment variable.
+  webhook_url: ""
