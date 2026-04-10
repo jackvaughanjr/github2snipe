@@ -114,7 +114,7 @@ func (c *Client) ValidateConnection(ctx context.Context) error {
 	case http.StatusNotFound:
 		if c.mode == "enterprise" {
 			return fmt.Errorf(
-				"github: enterprise %q returned 404 — GitHub returns 404 (not 403) when the slug is valid but the PAT user is not an enterprise owner; verify the user is listed at github.com/enterprises/%s/people and has the Owner role",
+				"github: enterprise %q returned 404 — most likely cause: PAT has read:enterprise but needs admin:enterprise (the members API requires full enterprise admin scope, not just profile read); also verify the PAT user is an enterprise owner at github.com/enterprises/%s/people",
 				c.enterprise, c.enterprise)
 		}
 		return fmt.Errorf("github: organization %q not found (404) — check the org name", c.org)
@@ -257,7 +257,7 @@ func (c *Client) fetchPagedUsers(ctx context.Context, basePath string) ([]apiUse
 
 func (c *Client) requiredScope() string {
 	if c.mode == "enterprise" {
-		return "read:enterprise"
+		return "admin:enterprise"
 	}
 	return "read:org"
 }

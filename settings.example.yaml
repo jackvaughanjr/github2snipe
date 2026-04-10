@@ -25,10 +25,11 @@ github:
   # Personal Access Token (PAT).
   # Can also be set via the GITHUB_TOKEN environment variable.
   # Required scopes:
-  #   mode: enterprise   → read:enterprise  (PAT user must also be an enterprise owner)
+  #   mode: enterprise   → admin:enterprise  (NOT read:enterprise — that only reads profile data;
+  #                         admin:enterprise is required to list members)
   #   mode: organization → read:org
-  # Note: GitHub returns 404 (not 403) when the slug is valid but the PAT user is
-  # not an enterprise owner. Verify ownership at github.com/enterprises/<slug>/people.
+  # Note: GitHub returns 404 (not 403) when the PAT has insufficient scope or the
+  # user is not an enterprise owner — both cases look identical in the API response.
   token: ""
 
   # Optional: prefix and/or suffix to wrap around the default license name.

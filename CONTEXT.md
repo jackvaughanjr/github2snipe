@@ -31,16 +31,17 @@ Create a PAT at GitHub → Settings → Developer Settings → Personal access t
 
 Required scopes and roles by mode:
 
-| Mode           | Required PAT scope | Required GitHub role               |
-|----------------|--------------------|------------------------------------|
-| `enterprise`   | `read:enterprise`  | Enterprise Owner                   |
-| `organization` | `read:org`         | Organization member (any role)     |
+| Mode           | Required PAT scope  | Required GitHub role               |
+|----------------|---------------------|------------------------------------|
+| `enterprise`   | `admin:enterprise`  | Enterprise Owner                   |
+| `organization` | `read:org`          | Organization member (any role)     |
 
-**Enterprise mode requires the PAT user to be an enterprise owner.** GitHub returns
-404 (not 403) for the enterprise members API when the slug is valid but the user
-is not an enterprise owner — this is intentional GitHub security behaviour to avoid
-confirming the existence of enterprise resources. Verify ownership at:
-`github.com/enterprises/{slug}/people` → filter by role "Owner".
+**Enterprise mode requires `admin:enterprise`, not just `read:enterprise`.**
+`read:enterprise` only grants access to the enterprise's public profile data.
+Listing members requires `admin:enterprise` (which includes `read:enterprise` as
+a sub-scope). GitHub returns 404 (not 403) when the PAT lacks sufficient scope or
+when the user is not an enterprise owner — this is intentional security behaviour
+to avoid confirming the existence of enterprise resources.
 
 Fine-grained PATs are supported. For enterprise mode, the fine-grained token needs
 the "Enterprise members: read" permission.
