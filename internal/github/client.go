@@ -1,6 +1,7 @@
 package github
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -75,6 +76,48 @@ type apiInvitation struct {
 	Login string `json:"login"` // empty if invited by email only
 	Email string `json:"email"` // empty if invited by GitHub login
 }
+
+// GraphQL response types for SAML identity queries.
+type gqlSAMLResponse struct {
+	Data struct {
+		Organization *struct {
+			SAMLIdentityProvider *struct {
+				ExternalIdentities struct {
+					PageInfo struct {
+						HasNextPage bool   `json:"hasNextPage"`
+						EndCursor   string `json:"endCursor"`
+					} `json:"pageInfo"`
+					Nodes []struct {
+						SAMLIdentity *struct {
+							NameID string `json:"nameId"`
+						} `json:"samlIdentity"`
+						User *struct {
+							Login string `json:"login"`
+						} `json:"user"`
+					} `json:"nodes"`
+				} `json:"externalIdentities"`
+			} `json:"samlIdentityProvider"`
+		} `json:"organization"`
+	} `json:"data"`
+	Errors []struct {
+		Message string `json:"message"`
+	} `json:"errors"`
+}
+
+const samlIdentitiesQuery = `
+query SAMLIdentities($org: String!, $after: String) {
+  organization(login: $org) {
+    samlIdentityProvider {
+      externalIdentities(first: 100, after: $after) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          samlIdentity { nameId }
+          user { login }
+        }
+      }
+    }
+  }
+}`
 
 // --- Public methods ---
 
@@ -262,6 +305,38 @@ func (c *Client) GetUserDetail(ctx context.Context, login string) (name, email, 
 	return u.Name, strings.ToLower(u.Email), createdAt, nil
 }
 
+// GetSAMLIdentities returns a login→email map built from SAML SSO identity
+// records for the configured org(s). The returned email is the SAML NameID
+// asserted by the identity provider — for most corporate setups this is the
+// company-managed email address.
+//
+// Returns an empty map (not an error) when:
+//   - the org has no SAML identity provider configured
+//   - the PAT owner lacks org admin permissions to list all identities
+//   - running in EMU enterprise mode (no orgs configured)
+//
+// Use this as a fallback to resolve email addresses for GitHub users who have
+// set their GitHub profile email to private.
+func (c *Client) GetSAMLIdentities(ctx context.Context) (map[string]string, error) {
+	orgs := c.activeOrgs()
+	if len(orgs) == 0 {
+		return map[string]string{}, nil
+	}
+	result := make(map[string]string)
+	for _, org := range orgs {
+		m, err := c.samlIdentitiesForOrg(ctx, org)
+		if err != nil {
+			return nil, fmt.Errorf("fetching SAML identities for org %s: %w", org, err)
+		}
+		for login, email := range m {
+			if _, exists := result[login]; !exists {
+				result[login] = email
+			}
+		}
+	}
+	return result, nil
+}
+
 // --- internal helpers ---
 
 // activeOrgs returns the org(s) to use for org-level API calls.
@@ -403,4 +478,76 @@ func (c *Client) newRequest(ctx context.Context, method, url string) (*http.Requ
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	return req, nil
+}
+
+// samlIdentitiesForOrg paginates through the SAML external identities for one
+// org and returns a login→email map. Returns an empty map without error when
+// the org has no SAML identity provider configured or the PAT owner does not
+// have org admin access.
+func (c *Client) samlIdentitiesForOrg(ctx context.Context, org string) (map[string]string, error) {
+	result := make(map[string]string)
+	var cursor any // nil on first page; string cursor on subsequent pages
+	for {
+		vars := map[string]any{"org": org, "after": cursor}
+		var resp gqlSAMLResponse
+		if err := c.graphqlPost(ctx, samlIdentitiesQuery, vars, &resp); err != nil {
+			// A non-200 HTTP status (e.g. 403 Forbidden) means the PAT lacks
+			// org admin permissions. Treat as empty — not a fatal sync error.
+			return map[string]string{}, nil
+		}
+		if len(resp.Errors) > 0 {
+			// GraphQL-level errors (e.g. "Must be an organization owner") are
+			// also treated as empty rather than fatal.
+			return map[string]string{}, nil
+		}
+		if resp.Data.Organization == nil || resp.Data.Organization.SAMLIdentityProvider == nil {
+			return result, nil // org exists but has no SAML provider configured
+		}
+		identities := resp.Data.Organization.SAMLIdentityProvider.ExternalIdentities
+		for _, node := range identities.Nodes {
+			if node.User == nil || node.SAMLIdentity == nil {
+				continue
+			}
+			login := strings.ToLower(node.User.Login)
+			email := strings.ToLower(node.SAMLIdentity.NameID)
+			if login != "" && email != "" {
+				result[login] = email
+			}
+		}
+		if !identities.PageInfo.HasNextPage {
+			break
+		}
+		cursor = identities.PageInfo.EndCursor
+	}
+	return result, nil
+}
+
+// graphqlPost sends a GraphQL POST request to the GitHub API and decodes the
+// response JSON into out. Applies rate limiting before sending.
+func (c *Client) graphqlPost(ctx context.Context, query string, variables map[string]any, out any) error {
+	if err := c.limiter.Wait(ctx); err != nil {
+		return err
+	}
+	body, err := json.Marshal(map[string]any{"query": query, "variables": variables})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiBase+"/graphql", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("github GraphQL: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("github GraphQL: status %d: %s", resp.StatusCode, string(b))
+	}
+	return json.NewDecoder(resp.Body).Decode(out)
 }

@@ -82,7 +82,20 @@ func (s *Syncer) Run(ctx context.Context, emailFilter string) (Result, error) {
 		members = append(members, pending...)
 	}
 
-	// 5. Enrich members: fetch email, name, and createdAt from GitHub user profiles.
+	// 5. Fetch SAML identities as an email fallback for users with private GitHub
+	// profile emails. For orgs with SAML SSO, the NameID is typically the
+	// company-managed email address. Returns an empty map (not an error) when
+	// SAML is not configured or the PAT owner lacks org admin access.
+	samlEmails, err := s.gh.GetSAMLIdentities(ctx)
+	if err != nil {
+		slog.Warn("could not fetch SAML identities — users with private profile emails will be skipped", "error", err)
+		samlEmails = map[string]string{}
+	}
+	if len(samlEmails) > 0 {
+		slog.Info("fetched SAML identities", "count", len(samlEmails))
+	}
+
+	// 6. Enrich members: fetch email, name, and createdAt from GitHub user profiles.
 	// Members without a login (pending-by-email invitations) already have their
 	// email set directly from the invitation response; skip profile lookup for them.
 	slog.Info("enriching member profiles", "total", len(members))
@@ -104,10 +117,15 @@ func (s *Syncer) Run(ctx context.Context, emailFilter string) (Result, error) {
 			continue
 		}
 		if email == "" {
-			slog.Warn("skipping GitHub user with private email — set a public email to include in sync",
-				"login", m.Login)
-			result.Warnings++
-			continue
+			if samlEmail, ok := samlEmails[strings.ToLower(m.Login)]; ok {
+				slog.Info("resolved email via SAML identity", "login", m.Login, "email", samlEmail)
+				email = samlEmail
+			} else {
+				slog.Warn("skipping GitHub user with private email — set a public email to include in sync",
+					"login", m.Login)
+				result.Warnings++
+				continue
+			}
 		}
 		m.Name = name
 		m.Email = email
@@ -116,7 +134,7 @@ func (s *Syncer) Run(ctx context.Context, emailFilter string) (Result, error) {
 	}
 	members = enriched
 
-	// 6. Deduplicate by lowercased email (member > outside_collaborator > pending priority).
+	// 7. Deduplicate by lowercased email (member > outside_collaborator > pending priority).
 	seen := make(map[string]struct{}, len(members))
 	deduped := make([]github.Member, 0, len(members))
 	for _, m := range members {
@@ -131,13 +149,13 @@ func (s *Syncer) Run(ctx context.Context, emailFilter string) (Result, error) {
 	members = deduped
 	slog.Info("enriched and deduplicated members", "count", len(members))
 
-	// 7. Build active email set for the checkin pass.
+	// 8. Build active email set for the checkin pass.
 	activeEmails := make(map[string]struct{}, len(members))
 	for _, m := range members {
 		activeEmails[strings.ToLower(m.Email)] = struct{}{}
 	}
 
-	// 8. Apply --email filter.
+	// 9. Apply --email filter.
 	if emailFilter != "" {
 		needle := strings.ToLower(emailFilter)
 		filtered := members[:0]
@@ -151,7 +169,7 @@ func (s *Syncer) Run(ctx context.Context, emailFilter string) (Result, error) {
 		slog.Info("filtered to single user", "email", emailFilter, "found", len(members) > 0)
 	}
 
-	// 9. Resolve or auto-create the GitHub manufacturer in Snipe-IT.
+	// 10. Resolve or auto-create the GitHub manufacturer in Snipe-IT.
 	manufacturerID := s.config.ManufacturerID
 	if !s.config.DryRun && manufacturerID == 0 {
 		mfr, err := s.snipe.FindOrCreateManufacturer(ctx, "GitHub", "https://github.com")
@@ -162,7 +180,7 @@ func (s *Syncer) Run(ctx context.Context, emailFilter string) (Result, error) {
 		slog.Info("resolved manufacturer", "id", manufacturerID, "name", "GitHub")
 	}
 
-	// 10. Find or create the license.
+	// 11. Find or create the license.
 	// Dry-run: find only; synthesize placeholder if not found (id=0).
 	slog.Info("finding or creating license", "name", s.config.LicenseName)
 	var lic *snipeit.License
@@ -186,7 +204,7 @@ func (s *Syncer) Run(ctx context.Context, emailFilter string) (Result, error) {
 	}
 	slog.Info("license resolved", "id", lic.ID, "seats", lic.Seats, "free", lic.FreeSeatsCount)
 
-	// 11. Expand seats if needed (never shrink automatically).
+	// 12. Expand seats if needed (never shrink automatically).
 	if activeCount > lic.Seats {
 		slog.Info("expanding license seats", "current", lic.Seats, "needed", activeCount)
 		if !s.config.DryRun {
@@ -197,7 +215,7 @@ func (s *Syncer) Run(ctx context.Context, emailFilter string) (Result, error) {
 		}
 	}
 
-	// 12. Load current seat assignments.
+	// 13. Load current seat assignments.
 	// Dry-run with a synthetic license (id=0) skips the API call.
 	// In production, id=0 means something went wrong — fail fast.
 	checkedOutByEmail := make(map[string]*snipeit.LicenseSeat)
@@ -223,7 +241,7 @@ func (s *Syncer) Run(ctx context.Context, emailFilter string) (Result, error) {
 	}
 	slog.Info("seat state loaded", "checked_out", len(checkedOutByEmail), "free", len(freeSeats))
 
-	// 13. Checkout / update loop.
+	// 14. Checkout / update loop.
 	tenant := s.config.Enterprise
 	if s.config.Mode == "organization" {
 		tenant = s.config.Organization
@@ -308,7 +326,7 @@ func (s *Syncer) Run(ctx context.Context, emailFilter string) (Result, error) {
 		result.CheckedOut++
 	}
 
-	// 14. Checkin loop — skip when --email filter is set.
+	// 15. Checkin loop — skip when --email filter is set.
 	if emailFilter == "" {
 		for email, seat := range checkedOutByEmail {
 			if _, active := activeEmails[email]; active {

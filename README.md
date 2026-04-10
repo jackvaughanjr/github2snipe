@@ -12,7 +12,8 @@ On each sync run, `github2snipe`:
 
 1. Fetches all active members from the configured GitHub Enterprise or Organization.
 2. Optionally includes outside collaborators and pending invitations (org mode).
-3. Looks up each member's public GitHub profile to resolve their email address.
+3. Resolves each member's email: checks their public GitHub profile, then falls back
+   to their SAML SSO identity (company email) if the profile email is private.
 4. Finds or creates a matching Snipe-IT license record.
 5. Checks out seats for active members; checks in seats for members who have left.
 6. Writes member role and type into each seat's notes field.
@@ -31,7 +32,8 @@ automatically when they change.
   - **Enterprise mode (traditional GHEC):** `read:org` scope; set `github.organizations` in config
   - **Organization mode:** `read:org` scope
 - A Snipe-IT instance with an API key that has license management permissions
-- GitHub users must have a **public email** set in their GitHub profile for matching to work
+- GitHub users must have a **public email** set in their GitHub profile, or belong to an org
+  with SAML SSO configured and a PAT owner who is an org admin (for SAML email fallback)
 
 ---
 
@@ -167,6 +169,12 @@ without making any changes.
 ./github2snipe sync --force
 ```
 
+### Suppress Slack notifications for a run
+
+```bash
+./github2snipe sync --no-slack
+```
+
 ### Global flags
 
 | Flag              | Description                              |
@@ -239,8 +247,12 @@ exposed by the enterprise members API.
 
 ## Caveats
 
-- **Private emails**: GitHub users with private email settings are skipped. Users
-  must have a public email in their GitHub profile for the sync to process them.
+- **Private emails**: GitHub users with private email settings cannot be matched via
+  their public profile. The sync automatically falls back to their SAML SSO identity
+  (`samlIdentity.nameId` from the GraphQL API) — typically the company-managed email
+  for orgs using Okta, Azure AD, or Google Workspace. This fallback requires the PAT
+  owner to be an org admin; if not, users with private emails are warned and skipped.
+  Not available in EMU enterprise mode.
 - **EMU vs traditional GHEC**: The enterprise members API (`GET /enterprises/{slug}/members`)
   only works for EMU (Enterprise Managed Users) tenants. Traditional GitHub Enterprise
   Cloud accounts must set `github.organizations` to enumerate members via org APIs.

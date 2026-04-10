@@ -111,6 +111,32 @@ deduplicated by login across orgs.
 | List pending org invitations     | `GET /orgs/{org}/invitations`                    |
 | User profile (email, name)       | `GET /users/{login}`                             |
 
+### SAML SSO email resolution (org mode and enterprise+organizations mode)
+
+When a member's public GitHub profile email is null (private email setting), the
+sync falls back to the SAML SSO identity for that user. SAML identities are fetched
+via the GraphQL API using cursor-based pagination.
+
+| Purpose                          | Endpoint / query                                        |
+|----------------------------------|---------------------------------------------------------|
+| SAML identity → company email    | `POST /graphql` — `organization.samlIdentityProvider.externalIdentities` |
+
+The `samlIdentity.nameId` field contains the SAML NameID asserted by the identity
+provider — for most corporate SSO setups (Okta, Azure AD, Google Workspace) this is
+the user's company-managed email address.
+
+This lookup is performed once per sync, before the per-user profile enrichment loop.
+The result is a `login → samlEmail` map used as a fallback when `GET /users/{login}`
+returns `"email": null`.
+
+**Graceful degradation**: if `samlIdentityProvider` is null (org has no SAML configured),
+or if the PAT owner lacks org admin permissions to list all identities, the lookup
+returns an empty map and the sync continues. Users with private emails are warned and
+skipped as before.
+
+Not supported in EMU enterprise mode (no `github.organizations` set) because the SAML
+identity endpoint is org-level, and `activeOrgs()` returns empty in that path.
+
 ---
 
 ## Config schema
@@ -346,11 +372,15 @@ a GitHub account yet. In this case:
    with 1,000 members, this adds ~1,000 extra API calls. At 10 req/s, expect ~2
    minutes of API work before the Snipe-IT sync begins.
 
-2. **Private GitHub emails cannot be matched.** If a user has set their GitHub
-   email to private, `GET /users/{login}` returns `"email": null`. Users with
-   private emails are warned and skipped — they cannot be matched to Snipe-IT
-   accounts. Users must set a public email in their GitHub profile for this
-   integration to process them.
+2. **Private GitHub emails fall back to SAML SSO identity.** If a user has set
+   their GitHub email to private, `GET /users/{login}` returns `"email": null`.
+   The sync then checks the SAML SSO identity map (fetched via GraphQL at the
+   start of each sync). If the user's `samlIdentity.nameId` is present — typically
+   the company-managed email for orgs using Okta, Azure AD, or Google Workspace —
+   that email is used instead. Users with private emails and no SAML identity on
+   record are warned and skipped. This fallback only works in organization mode and
+   enterprise+organizations mode (not EMU); it requires the PAT owner to be an org
+   admin (see gotcha #13).
 
 3. **Enterprise slug vs enterprise name.** The `enterprise` config key is the
    URL slug (e.g. `acme-corp`), not the display name. It appears in enterprise
@@ -407,6 +437,14 @@ a GitHub account yet. In this case:
     checks all currently assigned seats against the combined active-email set from
     the current sync. If `include_outside_collaborators` was previously enabled and
     is now disabled, collaborator seats will be checked in on the next sync run.
+
+13. **SAML identity lookup requires org admin.** The GraphQL
+    `organization.samlIdentityProvider.externalIdentities` query returns all SAML
+    identities only when the PAT owner is an org admin (owner or billing manager).
+    Regular org members receive a GraphQL-level error ("Must be an organization
+    owner") or only their own identity. In either case the sync degrades gracefully:
+    the SAML lookup returns an empty map, and users with private profile emails are
+    warned and skipped rather than crashing the sync.
 
 ---
 
