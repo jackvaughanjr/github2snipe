@@ -20,21 +20,28 @@ type Client struct {
 	mode       string // "enterprise" or "organization"
 	enterprise string
 	org        string
-	httpClient *http.Client
-	limiter    *rate.Limiter
+	// organizations is used in enterprise mode when the enterprise members API
+	// is not available (traditional GHEC without EMU). When set, members are
+	// enumerated from each org and deduplicated by login.
+	organizations []string
+	httpClient    *http.Client
+	limiter       *rate.Limiter
 }
 
 // NewClient returns a new GitHub API client.
 // mode must be "enterprise" or "organization".
-// enterprise is the enterprise slug (required for enterprise mode).
-// org is the organization name (required for organization mode).
-func NewClient(token, mode, enterprise, org string) *Client {
+// enterprise is the enterprise slug (enterprise mode).
+// org is the single org name (organization mode).
+// organizations is an optional list of org names used in enterprise mode to
+// enumerate members via org APIs instead of the enterprise members API.
+func NewClient(token, mode, enterprise, org string, organizations []string) *Client {
 	return &Client{
-		token:      token,
-		mode:       mode,
-		enterprise: enterprise,
-		org:        org,
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		token:         token,
+		mode:          mode,
+		enterprise:    enterprise,
+		org:           org,
+		organizations: organizations,
+		httpClient:    &http.Client{Timeout: 30 * time.Second},
 		// 10 req/s — well within GitHub's 5,000/hour primary limit and
 		// safe against secondary rate limits for sequential requests.
 		limiter: rate.NewLimiter(rate.Every(100*time.Millisecond), 1),
@@ -72,13 +79,19 @@ type apiInvitation struct {
 // --- Public methods ---
 
 // ValidateConnection probes the configured GitHub API endpoint and returns a
-// clear error if the token is invalid, lacks required scope, or the
-// enterprise/org slug is not found.
+// clear error if the token is invalid, lacks required scope, or the target
+// is not accessible.
 func (c *Client) ValidateConnection(ctx context.Context) error {
 	var path string
 	switch c.mode {
 	case "enterprise":
-		path = fmt.Sprintf("/enterprises/%s/members?per_page=1", c.enterprise)
+		if len(c.organizations) > 0 {
+			// Multi-org enterprise mode: probe the first configured org.
+			path = fmt.Sprintf("/orgs/%s/members?per_page=1", c.organizations[0])
+		} else {
+			// EMU enterprise mode: probe the enterprise members endpoint.
+			path = fmt.Sprintf("/enterprises/%s/members?per_page=1", c.enterprise)
+		}
 	case "organization":
 		path = fmt.Sprintf("/orgs/%s/members?per_page=1", c.org)
 	default:
@@ -109,15 +122,22 @@ func (c *Client) ValidateConnection(ctx context.Context) error {
 	case http.StatusUnauthorized:
 		return fmt.Errorf("github: invalid or missing token (401) — check github.token or GITHUB_TOKEN")
 	case http.StatusForbidden:
-		return fmt.Errorf("github: access forbidden (403): %s — ensure the PAT has %s scope and the authenticated user is an enterprise owner",
+		return fmt.Errorf("github: access forbidden (403): %s — ensure the PAT has %s scope",
 			apiErr.Message, c.requiredScope())
 	case http.StatusNotFound:
-		if c.mode == "enterprise" {
+		if c.mode == "enterprise" && len(c.organizations) == 0 {
 			return fmt.Errorf(
-				"github: enterprise %q returned 404 — most likely cause: PAT has read:enterprise but needs admin:enterprise (the members API requires full enterprise admin scope, not just profile read); also verify the PAT user is an enterprise owner at github.com/enterprises/%s/people",
-				c.enterprise, c.enterprise)
+				"github: enterprise members API returned 404 for %q — "+
+					"this API only works for Enterprise Managed Users (EMU) tenants; "+
+					"traditional GitHub Enterprise Cloud accounts must enumerate via org APIs instead — "+
+					"add your org name(s) to github.organizations in settings.yaml",
+				c.enterprise)
 		}
-		return fmt.Errorf("github: organization %q not found (404) — check the org name", c.org)
+		target := c.org
+		if c.mode == "enterprise" {
+			target = c.organizations[0]
+		}
+		return fmt.Errorf("github: organization %q not found (404) — check the org name", target)
 	default:
 		return fmt.Errorf("github: unexpected status %d: %s", resp.StatusCode, apiErr.Message)
 	}
@@ -125,10 +145,19 @@ func (c *Client) ValidateConnection(ctx context.Context) error {
 
 // ListMembers returns all active members of the configured enterprise or organization,
 // including their role. Bot accounts are excluded. Email and Name fields are not
-// populated here — call EnrichMembers to fetch them.
+// populated here — the syncer calls GetUserDetail to enrich them.
+//
+// Enterprise mode behaviour:
+//   - If github.organizations is set: enumerates members from each org and
+//     deduplicates by login. Works for traditional GHEC accounts.
+//   - If github.organizations is empty: calls the enterprise members API directly.
+//     Only works for EMU (Enterprise Managed Users) tenants.
 func (c *Client) ListMembers(ctx context.Context) ([]Member, error) {
 	switch c.mode {
 	case "enterprise":
+		if len(c.organizations) > 0 {
+			return c.listMembersFromOrgs(ctx, c.organizations)
+		}
 		return c.listByRoles(ctx,
 			fmt.Sprintf("/enterprises/%s/members", c.enterprise),
 			"member", "owner")
@@ -141,51 +170,70 @@ func (c *Client) ListMembers(ctx context.Context) ([]Member, error) {
 	}
 }
 
-// ListOutsideCollaborators returns outside collaborators for the configured
-// organization. Only valid in organization mode. Bot accounts are excluded.
+// ListOutsideCollaborators returns outside collaborators. In organization mode
+// it queries the single configured org. In enterprise mode with github.organizations
+// set, it queries each configured org and deduplicates by login.
 func (c *Client) ListOutsideCollaborators(ctx context.Context) ([]Member, error) {
-	if c.mode != "organization" {
-		return nil, fmt.Errorf("outside collaborators are only available in organization mode")
+	orgs := c.activeOrgs()
+	if len(orgs) == 0 {
+		return nil, fmt.Errorf("outside collaborators require organization mode or github.organizations set in enterprise mode")
 	}
-	users, err := c.fetchPagedUsers(ctx,
-		fmt.Sprintf("/orgs/%s/outside_collaborators", c.org))
-	if err != nil {
-		return nil, err
+
+	seen := make(map[string]struct{})
+	var all []Member
+	for _, org := range orgs {
+		users, err := c.fetchPagedUsers(ctx, fmt.Sprintf("/orgs/%s/outside_collaborators", org))
+		if err != nil {
+			return nil, fmt.Errorf("listing outside collaborators for org %s: %w", org, err)
+		}
+		for _, u := range users {
+			if _, ok := seen[u.Login]; !ok {
+				seen[u.Login] = struct{}{}
+				all = append(all, Member{Login: u.Login, MemberType: "outside_collaborator"})
+			}
+		}
 	}
-	members := make([]Member, len(users))
-	for i, u := range users {
-		members[i] = Member{Login: u.Login, MemberType: "outside_collaborator"}
-	}
-	return members, nil
+	return all, nil
 }
 
-// ListPendingInvitations returns pending org membership invitations for the
-// configured organization. Only valid in organization mode.
-// Members invited by email (no GitHub account yet) will have an empty Login
-// and their email pre-populated; members invited by login will need EnrichMembers
-// to resolve their email.
+// ListPendingInvitations returns pending org membership invitations. In
+// organization mode it queries the single configured org. In enterprise mode
+// with github.organizations set, it queries each configured org and deduplicates.
 func (c *Client) ListPendingInvitations(ctx context.Context) ([]Member, error) {
-	if c.mode != "organization" {
-		return nil, fmt.Errorf("pending invitations are only available in organization mode")
+	orgs := c.activeOrgs()
+	if len(orgs) == 0 {
+		return nil, fmt.Errorf("pending invitations require organization mode or github.organizations set in enterprise mode")
 	}
 
+	seen := make(map[string]struct{})
 	var all []Member
-	for page := 1; ; page++ {
-		url := fmt.Sprintf("%s/orgs/%s/invitations?per_page=100&page=%d",
-			apiBase, c.org, page)
-		var items []apiInvitation
-		if err := c.get(ctx, url, &items); err != nil {
-			return nil, fmt.Errorf("listing pending invitations (page %d): %w", page, err)
-		}
-		for _, inv := range items {
-			all = append(all, Member{
-				Login:      inv.Login,
-				Email:      strings.ToLower(inv.Email),
-				MemberType: "pending_invitation",
-			})
-		}
-		if len(items) < 100 {
-			break
+	for _, org := range orgs {
+		for page := 1; ; page++ {
+			url := fmt.Sprintf("%s/orgs/%s/invitations?per_page=100&page=%d", apiBase, org, page)
+			var items []apiInvitation
+			if err := c.get(ctx, url, &items); err != nil {
+				return nil, fmt.Errorf("listing pending invitations for org %s (page %d): %w", org, page, err)
+			}
+			for _, inv := range items {
+				key := inv.Login
+				if key == "" {
+					key = strings.ToLower(inv.Email)
+				}
+				if key == "" {
+					continue
+				}
+				if _, ok := seen[key]; !ok {
+					seen[key] = struct{}{}
+					all = append(all, Member{
+						Login:      inv.Login,
+						Email:      strings.ToLower(inv.Email),
+						MemberType: "pending_invitation",
+					})
+				}
+			}
+			if len(items) < 100 {
+				break
+			}
 		}
 	}
 	return all, nil
@@ -205,6 +253,39 @@ func (c *Client) GetUserDetail(ctx context.Context, login string) (name, email, 
 }
 
 // --- internal helpers ---
+
+// activeOrgs returns the org(s) to use for org-level API calls.
+// In organization mode it returns the single configured org.
+// In enterprise mode it returns the github.organizations list.
+func (c *Client) activeOrgs() []string {
+	if c.mode == "organization" {
+		return []string{c.org}
+	}
+	return c.organizations
+}
+
+// listMembersFromOrgs enumerates members (members + admins) from each org
+// in the list and deduplicates by login. Used in enterprise mode when the
+// enterprise members API is unavailable (traditional GHEC without EMU).
+func (c *Client) listMembersFromOrgs(ctx context.Context, orgs []string) ([]Member, error) {
+	seen := make(map[string]struct{})
+	var all []Member
+	for _, org := range orgs {
+		members, err := c.listByRoles(ctx,
+			fmt.Sprintf("/orgs/%s/members", org),
+			"member", "admin")
+		if err != nil {
+			return nil, fmt.Errorf("listing members from org %s: %w", org, err)
+		}
+		for _, m := range members {
+			if _, ok := seen[m.Login]; !ok {
+				seen[m.Login] = struct{}{}
+				all = append(all, m)
+			}
+		}
+	}
+	return all, nil
+}
 
 // listByRoles fetches members matching each role in roles and merges the results.
 // The GitHub API does not return role in the response body — role is inferred from
@@ -256,7 +337,8 @@ func (c *Client) fetchPagedUsers(ctx context.Context, basePath string) ([]apiUse
 }
 
 func (c *Client) requiredScope() string {
-	if c.mode == "enterprise" {
+	if c.mode == "enterprise" && len(c.organizations) == 0 {
+		// EMU path: enterprise members API.
 		return "admin:enterprise"
 	}
 	return "read:org"

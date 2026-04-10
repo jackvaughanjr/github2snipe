@@ -43,6 +43,7 @@ func runTest(cmd *cobra.Command, args []string) error {
 		mode,
 		viper.GetString("github.enterprise"),
 		viper.GetString("github.organization"),
+		viper.GetStringSlice("github.organizations"),
 	)
 	snipeClient := snipeit.NewClient(
 		viper.GetString("snipe_it.url"),
