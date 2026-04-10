@@ -189,40 +189,55 @@ on subsequent syncs only when the notes have changed or `--force` is used.
 ```
 enterprise: acme-corp
 role: member
+github_login: agilemofo
 ```
 
 **Enterprise member (role=owner):**
 ```
 enterprise: acme-corp
 role: owner
+github_login: agilemofo
 ```
 
 **Organization member (role=member):**
 ```
 organization: acme-corp
 role: member
+github_login: agilemofo
 ```
 
 **Organization admin (role=admin):**
 ```
 organization: acme-corp
 role: admin
+github_login: agilemofo
 ```
 
 **Outside collaborator:**
 ```
 organization: acme-corp
 type: outside_collaborator
+github_login: agilemofo
 ```
 
-**Pending org invitation:**
+**Pending org invitation (by login):**
+```
+organization: acme-corp
+status: pending_invitation
+github_login: agilemofo
+```
+
+**Pending org invitation (by email only, no GitHub account yet):**
 ```
 organization: acme-corp
 status: pending_invitation
 ```
+*(No `github_login` line — the invitee has no GitHub account yet.)*
 
 The enterprise slug or org name is included in the notes so that seats remain
 identifiable if licenses are renamed or when multiple GitHub tenants are in use.
+`github_login` maps the Snipe-IT seat back to the GitHub account regardless of
+what email address the user has in their profile.
 
 ---
 

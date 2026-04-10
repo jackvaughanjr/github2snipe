@@ -183,14 +183,15 @@ github:
 Each Snipe-IT seat checkout includes notes identifying the GitHub tenant and
 the member's role or type:
 
-| Member type            | Example notes                                   |
-|------------------------|-------------------------------------------------|
-| Enterprise member      | `enterprise: acme-corp`<br>`role: member`       |
-| Enterprise owner       | `enterprise: acme-corp`<br>`role: owner`        |
-| Org member             | `organization: acme-corp`<br>`role: member`     |
-| Org admin              | `organization: acme-corp`<br>`role: admin`      |
-| Outside collaborator   | `organization: acme-corp`<br>`type: outside_collaborator` |
-| Pending invitation     | `organization: acme-corp`<br>`status: pending_invitation` |
+| Member type            | Example notes                                                                              |
+|------------------------|--------------------------------------------------------------------------------------------|
+| Enterprise member      | `enterprise: acme-corp`<br>`role: member`<br>`github_login: agilemofo`                    |
+| Enterprise owner       | `enterprise: acme-corp`<br>`role: owner`<br>`github_login: agilemofo`                     |
+| Org member             | `organization: acme-corp`<br>`role: member`<br>`github_login: agilemofo`                  |
+| Org admin              | `organization: acme-corp`<br>`role: admin`<br>`github_login: agilemofo`                   |
+| Outside collaborator   | `organization: acme-corp`<br>`type: outside_collaborator`<br>`github_login: agilemofo`    |
+| Pending (by login)     | `organization: acme-corp`<br>`status: pending_invitation`<br>`github_login: agilemofo`    |
+| Pending (email-only)   | `organization: acme-corp`<br>`status: pending_invitation`                                 |
 
 ---
 

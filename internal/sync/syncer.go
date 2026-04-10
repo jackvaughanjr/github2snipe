@@ -346,6 +346,9 @@ func buildNotes(m github.Member, mode, tenant string) string {
 	case "pending_invitation":
 		lines = append(lines, "status: pending_invitation")
 	}
+	if m.Login != "" {
+		lines = append(lines, fmt.Sprintf("github_login: %s", m.Login))
+	}
 	return strings.Join(lines, "\n")
 }
 
