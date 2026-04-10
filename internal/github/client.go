@@ -122,6 +122,16 @@ func (c *Client) ValidateConnection(ctx context.Context) error {
 	case http.StatusUnauthorized:
 		return fmt.Errorf("github: invalid or missing token (401) — check github.token or GITHUB_TOKEN")
 	case http.StatusForbidden:
+		if strings.Contains(apiErr.Message, "SAML") || strings.Contains(apiErr.Message, "single sign-on") {
+			target := c.org
+			if c.mode == "enterprise" && len(c.organizations) > 0 {
+				target = c.organizations[0]
+			}
+			return fmt.Errorf(
+				"github: SAML SSO enforcement (403) — the PAT must be authorized for the %q organization: "+
+					"go to github.com/settings/tokens, click your token, then click \"Configure SSO\" → \"Authorize\" next to the org",
+				target)
+		}
 		return fmt.Errorf("github: access forbidden (403): %s — ensure the PAT has %s scope",
 			apiErr.Message, c.requiredScope())
 	case http.StatusNotFound:

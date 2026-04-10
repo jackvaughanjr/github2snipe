@@ -354,7 +354,15 @@ a GitHub account yet. In this case:
     for an EMU enterprise, ensure users have their corporate email set as their
     public GitHub email.
 
-11. **Checkin pass not affected by collaborator/pending flags.** The checkin pass
+11. **SAML SSO enforcement requires PAT authorization per org.** If an organization
+    enforces SAML single sign-on, every PAT must be explicitly authorized for that
+    org in addition to having the right scopes. The API returns 403 with the message
+    "Resource protected by organization SAML enforcement." Fix: go to
+    github.com/settings/tokens → click the token → "Configure SSO" → "Authorize"
+    next to the org. This must be done each time a new PAT is created, even if the
+    previous PAT was already authorized.
+
+12. **Checkin pass not affected by collaborator/pending flags.** The checkin pass
     checks all currently assigned seats against the combined active-email set from
     the current sync. If `include_outside_collaborators` was previously enabled and
     is now disabled, collaborator seats will be checked in on the next sync run.
