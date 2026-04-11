@@ -77,7 +77,7 @@ type apiInvitation struct {
 	Email string `json:"email"` // empty if invited by GitHub login
 }
 
-// GraphQL response types for SAML identity queries.
+// GraphQL response types for SAML/SCIM identity queries.
 type gqlSAMLResponse struct {
 	Data struct {
 		Organization *struct {
@@ -91,6 +91,9 @@ type gqlSAMLResponse struct {
 						SAMLIdentity *struct {
 							NameID string `json:"nameId"`
 						} `json:"samlIdentity"`
+						SCIMIdentity *struct {
+							Username string `json:"username"`
+						} `json:"scimIdentity"`
 						User *struct {
 							Login string `json:"login"`
 						} `json:"user"`
@@ -112,8 +115,43 @@ query SAMLIdentities($org: String!, $after: String) {
         pageInfo { hasNextPage endCursor }
         nodes {
           samlIdentity { nameId }
+          scimIdentity { username }
           user { login }
         }
+      }
+    }
+  }
+}`
+
+// GraphQL response types for verified domain email queries.
+type gqlVerifiedEmailsResponse struct {
+	Data struct {
+		Organization *struct {
+			MembersWithRole struct {
+				PageInfo struct {
+					HasNextPage bool   `json:"hasNextPage"`
+					EndCursor   string `json:"endCursor"`
+				} `json:"pageInfo"`
+				Nodes []struct {
+					Login  string   `json:"login"`
+					Emails []string `json:"organizationVerifiedDomainEmails"`
+				} `json:"nodes"`
+			} `json:"membersWithRole"`
+		} `json:"organization"`
+	} `json:"data"`
+	Errors []struct {
+		Message string `json:"message"`
+	} `json:"errors"`
+}
+
+const verifiedDomainEmailsQuery = `
+query OrgMemberVerifiedEmails($org: String!, $after: String) {
+  organization(login: $org) {
+    membersWithRole(first: 100, after: $after) {
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        login
+        organizationVerifiedDomainEmails(login: $org)
       }
     }
   }
@@ -337,6 +375,39 @@ func (c *Client) GetSAMLIdentities(ctx context.Context) (map[string]string, erro
 	return result, nil
 }
 
+// GetVerifiedDomainEmails returns a login→email map built from the
+// organizationVerifiedDomainEmails field on each org member. This returns
+// member emails that match the org's verified domain(s) — visible to org admins
+// even when the user's GitHub profile email is set to private.
+//
+// Used as a fallback after SAML/SCIM identity lookup for members who have not
+// authenticated via SSO but whose company email is verifiably associated with
+// their GitHub account.
+//
+// Returns an empty map (not an error) when:
+//   - the org has no verified domains configured
+//   - the PAT owner lacks org admin permissions
+//   - running in EMU enterprise mode (no orgs configured)
+func (c *Client) GetVerifiedDomainEmails(ctx context.Context) (map[string]string, error) {
+	orgs := c.activeOrgs()
+	if len(orgs) == 0 {
+		return map[string]string{}, nil
+	}
+	result := make(map[string]string)
+	for _, org := range orgs {
+		m, err := c.verifiedDomainEmailsForOrg(ctx, org)
+		if err != nil {
+			return nil, fmt.Errorf("fetching verified domain emails for org %s: %w", org, err)
+		}
+		for login, email := range m {
+			if _, exists := result[login]; !exists {
+				result[login] = email
+			}
+		}
+	}
+	return result, nil
+}
+
 // --- internal helpers ---
 
 // activeOrgs returns the org(s) to use for org-level API calls.
@@ -505,11 +576,19 @@ func (c *Client) samlIdentitiesForOrg(ctx context.Context, org string) (map[stri
 		}
 		identities := resp.Data.Organization.SAMLIdentityProvider.ExternalIdentities
 		for _, node := range identities.Nodes {
-			if node.User == nil || node.SAMLIdentity == nil {
+			if node.User == nil {
 				continue
 			}
 			login := strings.ToLower(node.User.Login)
-			email := strings.ToLower(node.SAMLIdentity.NameID)
+			// Prefer SAML NameID (asserted at login time); fall back to SCIM
+			// username (provisioned by the IdP via SCIM push, present even before
+			// the user has authenticated interactively via SSO).
+			var email string
+			if node.SAMLIdentity != nil && node.SAMLIdentity.NameID != "" {
+				email = strings.ToLower(node.SAMLIdentity.NameID)
+			} else if node.SCIMIdentity != nil && node.SCIMIdentity.Username != "" {
+				email = strings.ToLower(node.SCIMIdentity.Username)
+			}
 			if login != "" && email != "" {
 				result[login] = email
 			}
@@ -518,6 +597,43 @@ func (c *Client) samlIdentitiesForOrg(ctx context.Context, org string) (map[stri
 			break
 		}
 		cursor = identities.PageInfo.EndCursor
+	}
+	return result, nil
+}
+
+// verifiedDomainEmailsForOrg paginates through org members and returns a
+// login→email map of first verified-domain email per member. Returns an empty
+// map without error on permission failures or when no verified domains exist.
+func (c *Client) verifiedDomainEmailsForOrg(ctx context.Context, org string) (map[string]string, error) {
+	result := make(map[string]string)
+	var cursor any
+	for {
+		vars := map[string]any{"org": org, "after": cursor}
+		var resp gqlVerifiedEmailsResponse
+		if err := c.graphqlPost(ctx, verifiedDomainEmailsQuery, vars, &resp); err != nil {
+			return map[string]string{}, nil
+		}
+		if len(resp.Errors) > 0 {
+			return map[string]string{}, nil
+		}
+		if resp.Data.Organization == nil {
+			return result, nil
+		}
+		members := resp.Data.Organization.MembersWithRole
+		for _, node := range members.Nodes {
+			if node.Login == "" || len(node.Emails) == 0 {
+				continue
+			}
+			login := strings.ToLower(node.Login)
+			email := strings.ToLower(node.Emails[0])
+			if login != "" && email != "" {
+				result[login] = email
+			}
+		}
+		if !members.PageInfo.HasNextPage {
+			break
+		}
+		cursor = members.PageInfo.EndCursor
 	}
 	return result, nil
 }

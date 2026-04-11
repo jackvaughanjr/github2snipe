@@ -111,31 +111,40 @@ deduplicated by login across orgs.
 | List pending org invitations     | `GET /orgs/{org}/invitations`                    |
 | User profile (email, name)       | `GET /users/{login}`                             |
 
-### SAML SSO email resolution (org mode and enterprise+organizations mode)
+### Email resolution (org mode and enterprise+organizations mode)
 
-When a member's public GitHub profile email is null (private email setting), the
-sync falls back to the SAML SSO identity for that user. SAML identities are fetched
-via the GraphQL API using cursor-based pagination.
+Member email addresses are resolved in priority order from three GraphQL sources,
+all fetched once per sync before the per-user enrichment loop. In EMU enterprise
+mode (no `github.organizations` set) all three are skipped — `activeOrgs()` returns
+empty in that path.
 
-| Purpose                          | Endpoint / query                                        |
-|----------------------------------|---------------------------------------------------------|
-| SAML identity → company email    | `POST /graphql` — `organization.samlIdentityProvider.externalIdentities` |
+| Priority | Source                         | Endpoint / query                                                                |
+|----------|--------------------------------|---------------------------------------------------------------------------------|
+| 1st      | SAML identity (NameID)         | `POST /graphql` — `organization.samlIdentityProvider.externalIdentities { samlIdentity { nameId } }` |
+| 2nd      | SCIM identity (username)       | `POST /graphql` — same `externalIdentities` query — `scimIdentity { username }` |
+| 3rd      | Org verified domain email      | `POST /graphql` — `organization.membersWithRole { organizationVerifiedDomainEmails(login: $org) }` |
+| Fallback | Public GitHub profile email    | `GET /users/{login}` — `email` field (null when user has private email setting) |
+| Skip     | None of the above              | Warning logged; user excluded from sync                                         |
 
-The `samlIdentity.nameId` field contains the SAML NameID asserted by the identity
-provider — for most corporate SSO setups (Okta, Azure AD, Google Workspace) this is
-the user's company-managed email address.
+**SAML/SCIM identity** (`externalIdentities`): The `samlIdentity.nameId` is the SAML
+NameID asserted by the IdP at login time — typically the company-managed email for
+orgs using Okta, Azure AD, or Google Workspace. `scimIdentity.username` is provisioned
+by the IdP via SCIM push and is present even before the user has authenticated
+interactively via SSO. SAML is preferred over SCIM; both take priority over all other
+sources. When a SAML/SCIM identity exists for a user, it is used even if the user has
+a different public profile email — the IdP-managed identity is the authoritative match
+for Snipe-IT records.
 
-This lookup is performed once per sync, before the per-user profile enrichment loop.
-The result is a `login → samlEmail` map used as a fallback when `GET /users/{login}`
-returns `"email": null`.
+**Org verified domain email** (`organizationVerifiedDomainEmails`): For members whose
+org email is visible to org admins but who have no SAML/SCIM identity record (e.g.,
+joined before SSO was enforced), GitHub exposes emails matching the org's verified
+domain(s) via this field. Only emails matching a domain the org has verified are
+returned. Requires the PAT owner to be an org admin.
 
-**Graceful degradation**: if `samlIdentityProvider` is null (org has no SAML configured),
-or if the PAT owner lacks org admin permissions to list all identities, the lookup
-returns an empty map and the sync continues. Users with private emails are warned and
-skipped as before.
-
-Not supported in EMU enterprise mode (no `github.organizations` set) because the SAML
-identity endpoint is org-level, and `activeOrgs()` returns empty in that path.
+**Graceful degradation**: all three GraphQL lookups return an empty map (not an error)
+when the org has no SAML provider configured, the org has no verified domains, or the
+PAT owner lacks org admin permissions. The sync continues in all cases; users who
+cannot be resolved by any method are warned and skipped.
 
 ---
 
@@ -372,15 +381,16 @@ a GitHub account yet. In this case:
    with 1,000 members, this adds ~1,000 extra API calls. At 10 req/s, expect ~2
    minutes of API work before the Snipe-IT sync begins.
 
-2. **Private GitHub emails fall back to SAML SSO identity.** If a user has set
-   their GitHub email to private, `GET /users/{login}` returns `"email": null`.
-   The sync then checks the SAML SSO identity map (fetched via GraphQL at the
-   start of each sync). If the user's `samlIdentity.nameId` is present — typically
-   the company-managed email for orgs using Okta, Azure AD, or Google Workspace —
-   that email is used instead. Users with private emails and no SAML identity on
-   record are warned and skipped. This fallback only works in organization mode and
-   enterprise+organizations mode (not EMU); it requires the PAT owner to be an org
-   admin (see gotcha #13).
+2. **Email resolution uses three-tier fallback.** The sync resolves each member's
+   email using a priority chain: (1) SAML NameID or SCIM username from
+   `externalIdentities`, (2) org verified domain email from
+   `organizationVerifiedDomainEmails`, (3) public GitHub profile email from
+   `GET /users/{login}`. SAML/SCIM always wins even when the user also has a public
+   profile email — the IdP identity is the authoritative match for Snipe-IT records.
+   Verified domain email covers members who joined before SSO was enforced and have no
+   SAML/SCIM identity. Users who cannot be resolved by any method are warned and
+   skipped. All three GraphQL lookups require org admin access and are skipped in EMU
+   enterprise mode (see gotcha #13).
 
 3. **Enterprise slug vs enterprise name.** The `enterprise` config key is the
    URL slug (e.g. `acme-corp`), not the display name. It appears in enterprise
@@ -438,13 +448,14 @@ a GitHub account yet. In this case:
     the current sync. If `include_outside_collaborators` was previously enabled and
     is now disabled, collaborator seats will be checked in on the next sync run.
 
-13. **SAML identity lookup requires org admin.** The GraphQL
-    `organization.samlIdentityProvider.externalIdentities` query returns all SAML
-    identities only when the PAT owner is an org admin (owner or billing manager).
-    Regular org members receive a GraphQL-level error ("Must be an organization
-    owner") or only their own identity. In either case the sync degrades gracefully:
-    the SAML lookup returns an empty map, and users with private profile emails are
-    warned and skipped rather than crashing the sync.
+13. **All GraphQL email lookups require org admin.** The three GraphQL queries used
+    for email resolution (`samlIdentityProvider.externalIdentities`,
+    `scimIdentity.username`, and `organizationVerifiedDomainEmails`) all require the
+    PAT owner to be an org admin (owner or billing manager). Regular org members
+    receive GraphQL-level errors or only their own identity. All three lookups degrade
+    gracefully — they return empty maps rather than failing the sync — so a non-admin
+    PAT will simply fall back to public profile emails, warning and skipping users
+    whose emails are private.
 
 ---
 
