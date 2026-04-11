@@ -17,6 +17,10 @@ type Config struct {
 	CreateUsers       bool
 	LicenseName       string
 	LicenseCategoryID int
+	// LicenseSeats is the total purchased seat count to set on the Snipe-IT
+	// license. If 0, the active member count is used as the minimum. Always
+	// expands to cover active members if configured seats would fall short.
+	LicenseSeats int
 	// ManufacturerID is optional. If 0, "GitHub" is auto found/created.
 	ManufacturerID int
 	// SupplierID is optional. If 0, no supplier is set on the license.
@@ -215,9 +219,31 @@ func (s *Syncer) Run(ctx context.Context, emailFilter string) (Result, error) {
 
 	// 12. Find or create the license.
 	// Dry-run: find only; synthesize placeholder if not found (id=0).
+	//
+	// targetSeats is the seat count to use when creating or expanding the
+	// Snipe-IT license. Resolution priority (highest to lowest):
+	//   1. Total purchased seats from GitHub enterprise consumed-licenses API
+	//   2. snipe_it.license_seats config (manual override / fallback)
+	//   3. Active member count (floor — seats never drop below this)
+	activeCount := len(activeEmails)
+	ghLicenseSeats := s.gh.GetEnterpriseLicenseCount(ctx)
+	if ghLicenseSeats > 0 {
+		slog.Info("fetched enterprise license count from GitHub", "seats", ghLicenseSeats)
+	}
+	targetSeats := ghLicenseSeats
+	if targetSeats == 0 {
+		targetSeats = s.config.LicenseSeats
+	}
+	if targetSeats == 0 {
+		targetSeats = activeCount
+	} else if targetSeats < activeCount {
+		slog.Warn("license seat count is less than active member count; using active count",
+			"license_seats", targetSeats, "active", activeCount)
+		targetSeats = activeCount
+	}
+
 	slog.Info("finding or creating license", "name", s.config.LicenseName)
 	var lic *snipeit.License
-	activeCount := len(activeEmails)
 	if s.config.DryRun {
 		lic, err = s.snipe.FindLicenseByName(ctx, s.config.LicenseName)
 		if err != nil {
@@ -225,11 +251,11 @@ func (s *Syncer) Run(ctx context.Context, emailFilter string) (Result, error) {
 		}
 		if lic == nil {
 			slog.Info("[dry-run] license not found; would be created",
-				"name", s.config.LicenseName, "seats", activeCount)
-			lic = &snipeit.License{Name: s.config.LicenseName, Seats: activeCount}
+				"name", s.config.LicenseName, "seats", targetSeats)
+			lic = &snipeit.License{Name: s.config.LicenseName, Seats: targetSeats}
 		}
 	} else {
-		lic, err = s.snipe.FindOrCreateLicense(ctx, s.config.LicenseName, activeCount,
+		lic, err = s.snipe.FindOrCreateLicense(ctx, s.config.LicenseName, targetSeats,
 			s.config.LicenseCategoryID, manufacturerID, s.config.SupplierID)
 		if err != nil {
 			return result, err
@@ -238,10 +264,10 @@ func (s *Syncer) Run(ctx context.Context, emailFilter string) (Result, error) {
 	slog.Info("license resolved", "id", lic.ID, "seats", lic.Seats, "free", lic.FreeSeatsCount)
 
 	// 13. Expand seats if needed (never shrink automatically).
-	if activeCount > lic.Seats {
-		slog.Info("expanding license seats", "current", lic.Seats, "needed", activeCount)
+	if targetSeats > lic.Seats {
+		slog.Info("expanding license seats", "current", lic.Seats, "needed", targetSeats)
 		if !s.config.DryRun {
-			lic, err = s.snipe.UpdateLicenseSeats(ctx, lic.ID, activeCount)
+			lic, err = s.snipe.UpdateLicenseSeats(ctx, lic.ID, targetSeats)
 			if err != nil {
 				return result, err
 			}
@@ -261,8 +287,13 @@ func (s *Syncer) Run(ctx context.Context, emailFilter string) (Result, error) {
 		}
 		for i := range seats {
 			seat := &seats[i]
-			if seat.AssignedTo != nil && seat.AssignedTo.Email != "" {
-				checkedOutByEmail[strings.ToLower(seat.AssignedTo.Email)] = seat
+			if seat.AssignedTo == nil {
+				freeSeats = append(freeSeats, seat)
+				continue
+			}
+			email := strings.ToLower(seat.AssignedTo.Email)
+			if email != "" {
+				checkedOutByEmail[email] = seat
 			} else {
 				freeSeats = append(freeSeats, seat)
 			}
@@ -273,6 +304,38 @@ func (s *Syncer) Run(ctx context.Context, emailFilter string) (Result, error) {
 		slog.Info("[dry-run] skipping seat load for new license")
 	}
 	slog.Info("seat state loaded", "checked_out", len(checkedOutByEmail), "free", len(freeSeats))
+
+	// Ghost-checkout cleanup: seats Snipe-IT considers checked out (based on its
+	// internal free_seats_count) but that returned assigned_to=null in the listing.
+	// This happens when seats were checked out via the UI and those users were later
+	// removed, or via a previous broken sync. Clean them in so the state is correct.
+	if lic.ID != 0 {
+		snipeCheckedOut := lic.Seats - lic.FreeSeatsCount
+		ghostCount := snipeCheckedOut - len(checkedOutByEmail)
+		if ghostCount > 0 {
+			slog.Warn("ghost checkouts detected — seats Snipe-IT counts as used but with no user assignment; cleaning up",
+				"ghost_count", ghostCount)
+			cleaned := 0
+			for _, seat := range freeSeats {
+				if cleaned >= ghostCount {
+					break
+				}
+				if s.config.DryRun {
+					slog.Info("[dry-run] would check in ghost seat", "seat_id", seat.ID)
+					cleaned++
+					continue
+				}
+				if err := s.snipe.CheckinSeat(ctx, lic.ID, seat.ID); err != nil {
+					slog.Debug("ghost seat checkin failed (may already be free)", "seat_id", seat.ID, "error", err)
+				} else {
+					cleaned++
+				}
+			}
+			if !s.config.DryRun {
+				slog.Info("ghost checkouts cleaned", "cleaned", cleaned)
+			}
+		}
+	}
 
 	// 15. Checkout / update loop.
 	tenant := s.config.Enterprise

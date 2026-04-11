@@ -78,6 +78,7 @@ func runSync(cmd *cobra.Command, args []string) error {
 		CreateUsers:                 viper.GetBool("sync.create_users"),
 		LicenseName:                 licenseName,
 		LicenseCategoryID:           categoryID,
+		LicenseSeats:                viper.GetInt("snipe_it.license_seats"),
 		ManufacturerID:              viper.GetInt("snipe_it.license_manufacturer_id"),
 		SupplierID:                  viper.GetInt("snipe_it.license_supplier_id"),
 		Mode:                        mode,

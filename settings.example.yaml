@@ -97,6 +97,17 @@ snipe_it:
   # Optional: supplier ID. If 0, no supplier is set on the license.
   license_supplier_id: 0
 
+  # Optional: total purchased seat count to set on the Snipe-IT license.
+  #
+  # In enterprise mode, the sync automatically fetches this from GitHub via the
+  # consumed-licenses API (requires the PAT to have read:enterprise or
+  # admin:enterprise scope). When the API returns a value, this field is ignored.
+  #
+  # Set this as a manual override when auto-fetch is not available (e.g. org mode,
+  # or PAT lacks the required scope). If 0 and auto-fetch returns nothing, the
+  # active member count is used as the floor. Seats are never shrunk automatically.
+  license_seats: 0
+
 sync:
   # Simulate a full sync without making any changes.
   # Overridden by the --dry-run flag.

@@ -78,11 +78,19 @@ Enterprise mode supports two paths depending on your GitHub Enterprise Cloud typ
 
 **EMU (Enterprise Managed Users) — `github.organizations` not set:**
 
-| Purpose                     | Endpoint                                               |
-|-----------------------------|--------------------------------------------------------|
-| List members (role=member)  | `GET /enterprises/{enterprise}/members?role=member`    |
-| List members (role=owner)   | `GET /enterprises/{enterprise}/members?role=owner`     |
-| User profile (email, name)  | `GET /users/{login}`                                   |
+| Purpose                     | Endpoint                                                               |
+|-----------------------------|------------------------------------------------------------------------|
+| List members (role=member)  | `GET /enterprises/{enterprise}/members?role=member`                    |
+| List members (role=owner)   | `GET /enterprises/{enterprise}/members?role=owner`                     |
+| Total purchased seat count  | `GET /enterprises/{enterprise}/consumed-licenses?per_page=1`           |
+| User profile (email, name)  | `GET /users/{login}`                                                   |
+
+The consumed-licenses endpoint returns `total_seats_purchased` and
+`total_seats_consumed`. Requires `read:enterprise` or `admin:enterprise` scope.
+The sync uses `total_seats_purchased` to set the Snipe-IT license seat count
+automatically, so Snipe-IT reflects the actual purchased license quantity rather
+than just the active member count. Falls back to `snipe_it.license_seats` config
+or the active member count if the API call fails or returns zero.
 
 Outside collaborators and pending invitations are **org-level** concepts and are not
 available via the enterprise members API. These features are not supported in the
@@ -212,6 +220,14 @@ snipe_it:
 
   # Optional: supplier ID. If 0, no supplier is set.
   license_supplier_id: 0
+
+  # Optional: total purchased seat count to set on the Snipe-IT license.
+  # In enterprise mode, the sync automatically fetches this from GitHub via the
+  # consumed-licenses API (requires admin:enterprise or read:enterprise scope).
+  # Set this as a manual override when auto-fetch is not available (org mode, or
+  # PAT lacks the required scope). If 0 and auto-fetch returns nothing, the active
+  # member count is used as the floor. Seats are never shrunk automatically.
+  license_seats: 0
 
 sync:
   dry_run: false
@@ -456,6 +472,21 @@ a GitHub account yet. In this case:
     gracefully — they return empty maps rather than failing the sync — so a non-admin
     PAT will simply fall back to public profile emails, warning and skipping users
     whose emails are private.
+
+14. **Snipe-IT seat listing uses `assigned_user`, not `assigned_to`.** The
+    `GET /api/v1/licenses/{id}/seats` response returns the assigned user under
+    the key `assigned_user` (nested object with id, name, email), not `assigned_to`.
+    The PATCH checkout body still uses `assigned_to` (integer). Using the wrong
+    JSON tag on the struct (`assigned_to` instead of `assigned_user`) causes all
+    seats to decode as unassigned (nil), making the sync re-checkout all seats
+    on every run.
+
+15. **Ghost checkouts.** Snipe-IT may count seats as used internally (via
+    `free_seats_count`) while the `assigned_user` field in the seat listing is
+    null. This happens when seats were checked out via the Snipe-IT UI and not
+    properly checked back in. The sync detects ghosts as
+    `(lic.Seats - lic.FreeSeatsCount) - len(checkedOutByEmail)` and automatically
+    cleans them up via PATCH checkin before the checkout loop.
 
 ---
 

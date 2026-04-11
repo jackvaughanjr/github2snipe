@@ -52,7 +52,7 @@ type AssignedTo struct {
 type LicenseSeat struct {
 	ID         int         `json:"id"`
 	LicenseID  int         `json:"license_id"`
-	AssignedTo *AssignedTo `json:"assigned_to"`
+	AssignedTo *AssignedTo `json:"assigned_user"`
 	Notes      string      `json:"notes"`
 }
 
@@ -231,7 +231,8 @@ func (c *Client) ListLicenseSeats(ctx context.Context, licenseID int) ([]License
 	return result.Rows, nil
 }
 
-// CheckoutSeat assigns a seat to a Snipe-IT user via PATCH (POST returns 405).
+// CheckoutSeat assigns a seat to a Snipe-IT user via PATCH.
+// The body field "assigned_to" takes the Snipe-IT user ID as an integer.
 func (c *Client) CheckoutSeat(ctx context.Context, licenseID, seatID, userID int, notes string) error {
 	body := map[string]any{
 		"assigned_to": userID,
@@ -247,23 +248,20 @@ func (c *Client) CheckoutSeat(ctx context.Context, licenseID, seatID, userID int
 	return nil
 }
 
-// CheckinSeat returns a seat via DELETE.
+// CheckinSeat returns a seat by PATCHing assigned_to and asset_id to null.
+// Snipe-IT does not support DELETE on license seats; clearing the assignment
+// via PATCH is the correct way to check a seat back in.
 func (c *Client) CheckinSeat(ctx context.Context, licenseID, seatID int) error {
-	if err := c.limiter.Wait(ctx); err != nil {
+	body := map[string]any{
+		"assigned_to": nil,
+		"asset_id":    nil,
+	}
+	var env envelope
+	if err := c.patch(ctx, fmt.Sprintf("/api/v1/licenses/%d/seats/%d", licenseID, seatID), body, &env); err != nil {
 		return err
 	}
-	req, err := c.newRequest(ctx, http.MethodDelete,
-		fmt.Sprintf("%s/api/v1/licenses/%d/seats/%d", c.baseURL, licenseID, seatID), nil)
-	if err != nil {
-		return err
-	}
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		return fmt.Errorf("snipeit CheckinSeat license=%d seat=%d: status %d", licenseID, seatID, resp.StatusCode)
+	if env.Status != "success" {
+		return fmt.Errorf("snipeit CheckinSeat license=%d seat=%d: status=%q messages=%s", licenseID, seatID, env.Status, string(env.Message))
 	}
 	return nil
 }
@@ -276,6 +274,15 @@ func (c *Client) UpdateSeatNotes(ctx context.Context, licenseID, seatID int, not
 }
 
 // --- User methods ---
+
+// FindUserByID fetches a Snipe-IT user by numeric ID.
+func (c *Client) FindUserByID(ctx context.Context, id int) (*SnipeUser, error) {
+	var u SnipeUser
+	if err := c.get(ctx, fmt.Sprintf("/api/v1/users/%d", id), &u); err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
 
 // FindUserByEmail searches Snipe-IT users by email. Returns nil, nil if not found.
 func (c *Client) FindUserByEmail(ctx context.Context, email string) (*SnipeUser, error) {

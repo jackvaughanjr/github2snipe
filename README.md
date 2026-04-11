@@ -209,6 +209,25 @@ github:
 
 ---
 
+## License seat count
+
+In enterprise mode the sync automatically fetches the total purchased seat count
+from GitHub via the `consumed-licenses` API and sets that on the Snipe-IT license.
+This requires the PAT to have `read:enterprise` or `admin:enterprise` scope.
+
+If auto-fetch is not available (org mode, or PAT lacks the required scope), set
+`snipe_it.license_seats` as a manual override:
+
+```yaml
+snipe_it:
+  license_seats: 34  # total purchased GitHub Enterprise licenses
+```
+
+The sync never shrinks seats. If the resolved seat count falls below the active
+member count, the active member count is used as the floor.
+
+---
+
 ## Seat notes
 
 Each Snipe-IT seat checkout includes notes identifying the GitHub tenant and

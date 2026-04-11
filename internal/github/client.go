@@ -61,6 +61,11 @@ type Member struct {
 
 // --- raw API response types ---
 
+type apiEnterpriseLicense struct {
+	TotalSeatsPurchased int `json:"total_seats_purchased"`
+	TotalSeatsConsumed  int `json:"total_seats_consumed"`
+}
+
 type apiUser struct {
 	Login string `json:"login"`
 	Type  string `json:"type"` // "User" or "Bot"
@@ -406,6 +411,25 @@ func (c *Client) GetVerifiedDomainEmails(ctx context.Context) (map[string]string
 		}
 	}
 	return result, nil
+}
+
+// GetEnterpriseLicenseCount fetches the total purchased seat count from the
+// enterprise consumed-licenses endpoint. Returns 0 when:
+//   - not in enterprise mode or no enterprise slug configured
+//   - the PAT lacks read:enterprise scope (403)
+//   - any other API error
+//
+// Never returns an error — callers fall back to configured or computed seat counts.
+func (c *Client) GetEnterpriseLicenseCount(ctx context.Context) int {
+	if c.mode != "enterprise" || c.enterprise == "" {
+		return 0
+	}
+	url := fmt.Sprintf("%s/enterprises/%s/consumed-licenses?per_page=1", apiBase, c.enterprise)
+	var resp apiEnterpriseLicense
+	if err := c.get(ctx, url, &resp); err != nil {
+		return 0
+	}
+	return resp.TotalSeatsPurchased
 }
 
 // --- internal helpers ---
