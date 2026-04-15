@@ -289,3 +289,18 @@ exposed by the enterprise members API.
 - **Rate limits**: The sync makes one additional API call per member to resolve email
   addresses. For large enterprises (1,000+ members), allow a few minutes for the
   enrichment phase before Snipe-IT writes begin.
+
+## Version History
+
+| Version | Key changes |
+|---------|-------------|
+| v1.0.0 | Initial scaffold — GitHub Enterprise Cloud → Snipe-IT license seat sync |
+| v1.0.1 | Added `github_login` to seat notes |
+| v1.0.2 | Improved enterprise 404 error message explaining the owner slug requirement |
+| v1.0.3 | Fixed enterprise PAT scope (`admin:enterprise` required, not `read:enterprise`) |
+| v1.1.0 | Detect SAML SSO 403 with actionable remediation instructions |
+| v1.2.0 | Support traditional GHEC orgs via `github.organizations` (in addition to EMU) |
+| v1.2.1 | Documented EMU vs traditional GHEC split and syncer bug fix in CONTEXT.md |
+| v1.3.0 | Added `--no-slack` flag; SAML SSO email fallback for member enumeration |
+| v1.4.0 | Improved email resolution — SAML identity takes priority; SCIM and verified domain fallbacks added |
+| v1.5.0 | Fixed seat state tracking; auto license seat count from GitHub API |
