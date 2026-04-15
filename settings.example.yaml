@@ -123,6 +123,11 @@ sync:
   # Requires GitHub users to have a public email set in their GitHub profile.
   create_users: false
 
+  # Snipe-IT API rate limit in milliseconds between requests.
+  # 500ms = 2 req/s. Reduce for local instances; increase if you encounter 429 errors.
+  # Override: SNIPE_RATE_LIMIT_MS
+  rate_limit_ms: 500
+
 slack:
   # Incoming webhook URL for Slack notifications.
   # Optional. If omitted, all notifications are silently skipped.

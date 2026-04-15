@@ -64,9 +64,14 @@ func runSync(cmd *cobra.Command, args []string) error {
 		viper.GetString("github.organization"),
 		viper.GetStringSlice("github.organizations"),
 	)
+	rateLimitMs := viper.GetInt("sync.rate_limit_ms")
+	if rateLimitMs <= 0 {
+		rateLimitMs = 500
+	}
 	snipeClient := snipeit.NewClient(
 		viper.GetString("snipe_it.url"),
 		viper.GetString("snipe_it.api_key"),
+		rateLimitMs,
 	)
 
 	emailFilter, _ := cmd.Flags().GetString("email")

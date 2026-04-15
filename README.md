@@ -6,6 +6,8 @@ Sync active GitHub Enterprise or Organization members into [Snipe-IT](https://sn
 
 Supports both GitHub Enterprise (cloud) and standalone GitHub Organizations. Auth via a Personal Access Token (PAT). Runs fully headless — suitable for cron or CI.
 
+> Part of the [\*2snipe](https://github.com/jackvaughanjr?tab=repositories&q=2snipe) integration family, inspired by [CampusTech](https://github.com/CampusTech)'s Snipe-IT integrations.
+
 ---
 
 ## How it works
@@ -296,13 +298,14 @@ exposed by the enterprise members API.
 
 | Version | Key changes |
 |---------|-------------|
-| v1.0.0 | Initial scaffold — GitHub Enterprise Cloud → Snipe-IT license seat sync |
-| v1.0.1 | Added `github_login` to seat notes |
-| v1.0.2 | Improved enterprise 404 error message explaining the owner slug requirement |
-| v1.0.3 | Fixed enterprise PAT scope (`admin:enterprise` required, not `read:enterprise`) |
-| v1.1.0 | Detect SAML SSO 403 with actionable remediation instructions |
-| v1.2.0 | Support traditional GHEC orgs via `github.organizations` (in addition to EMU) |
-| v1.2.1 | Documented EMU vs traditional GHEC split and syncer bug fix in CONTEXT.md |
-| v1.3.0 | Added `--no-slack` flag; SAML SSO email fallback for member enumeration |
-| v1.4.0 | Improved email resolution — SAML identity takes priority; SCIM and verified domain fallbacks added |
+| v1.6.0 | Make Snipe-IT API rate limit configurable via `sync.rate_limit_ms` and `SNIPE_RATE_LIMIT_MS` env var |
 | v1.5.0 | Fixed seat state tracking; auto license seat count from GitHub API |
+| v1.4.0 | Improved email resolution — SAML identity takes priority; SCIM and verified domain fallbacks added |
+| v1.3.0 | Added `--no-slack` flag; SAML SSO email fallback for member enumeration |
+| v1.2.1 | Documented EMU vs traditional GHEC split and syncer bug fix in CONTEXT.md |
+| v1.2.0 | Support traditional GHEC orgs via `github.organizations` (in addition to EMU) |
+| v1.1.0 | Detect SAML SSO 403 with actionable remediation instructions |
+| v1.0.3 | Fixed enterprise PAT scope (`admin:enterprise` required, not `read:enterprise`) |
+| v1.0.2 | Improved enterprise 404 error message explaining the owner slug requirement |
+| v1.0.1 | Added `github_login` to seat notes |
+| v1.0.0 | Initial scaffold — GitHub Enterprise Cloud → Snipe-IT license seat sync |
