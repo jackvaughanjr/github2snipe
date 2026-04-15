@@ -1,0 +1,115 @@
+{
+  "$schema": "https://raw.githubusercontent.com/jackvaughanjr/2snipe-manager/main/2snipe.schema.json",
+  "name": "github2snipe",
+  "display_name": "GitHub",
+  "description": "Sync GitHub Enterprise or organization members to Snipe-IT license seats",
+  "version": "1.6.0",
+  "min_snipemgr": "0.1.0",
+  "tags": ["saas", "developer-tools", "vcs"],
+  "category": "Developer Tools & Hosting",
+  "config_schema": [
+    {
+      "key": "github.mode",
+      "label": "Connection Mode",
+      "secret": false,
+      "required": true,
+      "default": "enterprise",
+      "hint": "\"enterprise\" to sync all members of a GitHub Enterprise; \"organization\" to sync a single org"
+    },
+    {
+      "key": "github.enterprise",
+      "label": "GitHub Enterprise Slug",
+      "secret": false,
+      "required": false,
+      "hint": "Required when mode: enterprise. URL slug from github.com/enterprises/<slug>"
+    },
+    {
+      "key": "github.organization",
+      "label": "GitHub Organization Name",
+      "secret": false,
+      "required": false,
+      "hint": "Required when mode: organization. The org's login name (not display name)"
+    },
+    {
+      "key": "github.token",
+      "label": "GitHub Personal Access Token",
+      "secret": true,
+      "required": true,
+      "hint": "enterprise mode: admin:enterprise scope. organization mode: read:org scope"
+    },
+    {
+      "key": "snipe_it.url",
+      "label": "Snipe-IT URL",
+      "secret": false,
+      "required": true,
+      "hint": "e.g. https://snipe.example.com"
+    },
+    {
+      "key": "snipe_it.api_key",
+      "label": "Snipe-IT API Key",
+      "secret": true,
+      "required": true,
+      "hint": "Admin → API Keys in your Snipe-IT instance"
+    },
+    {
+      "key": "snipe_it.license_category_id",
+      "label": "Snipe-IT License Category ID",
+      "secret": false,
+      "required": true,
+      "hint": "Find at Admin → Categories (integer ID)"
+    },
+    {
+      "key": "snipe_it.license_name",
+      "label": "Snipe-IT License Name Override",
+      "secret": false,
+      "required": false,
+      "hint": "Optional. Overrides the auto-resolved name (\"GitHub Enterprise\" or \"GitHub\")"
+    },
+    {
+      "key": "github.license_name_prefix",
+      "label": "License Name Prefix",
+      "secret": false,
+      "required": false,
+      "hint": "Optional prefix prepended to the license name, e.g. \"Acme - \""
+    },
+    {
+      "key": "github.license_name_suffix",
+      "label": "License Name Suffix",
+      "secret": false,
+      "required": false,
+      "hint": "Optional suffix appended to the license name, e.g. \" (acme)\""
+    },
+    {
+      "key": "github.include_outside_collaborators",
+      "label": "Include Outside Collaborators",
+      "secret": false,
+      "required": false,
+      "default": "false",
+      "hint": "Sync outside collaborators (organization mode only)"
+    },
+    {
+      "key": "github.include_pending_invitations",
+      "label": "Include Pending Invitations",
+      "secret": false,
+      "required": false,
+      "default": "false",
+      "hint": "Sync pending membership invitations (organization mode only)"
+    },
+    {
+      "key": "slack.webhook_url",
+      "label": "Slack Webhook URL",
+      "secret": true,
+      "required": false,
+      "hint": "Optional. Incoming webhook for sync notifications"
+    }
+  ],
+  "shared_config": ["snipe_it"],
+  "commands": {
+    "sync": true,
+    "test": true
+  },
+  "releases": {
+    "github_releases": true,
+    "asset_pattern": "github2snipe-{os}-{arch}"
+  }
+}
