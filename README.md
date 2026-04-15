@@ -1,5 +1,7 @@
 # github2snipe
 
+[![Latest Release](https://img.shields.io/github/v/release/jackvaughanjr/github2snipe)](https://github.com/jackvaughanjr/github2snipe/releases/latest) [![Go Version](https://img.shields.io/github/go-mod/go-version/jackvaughanjr/github2snipe)](go.mod) [![License](https://img.shields.io/github/license/jackvaughanjr/github2snipe)](LICENSE) [![Build](https://github.com/jackvaughanjr/github2snipe/actions/workflows/release.yml/badge.svg)](https://github.com/jackvaughanjr/github2snipe/actions/workflows/release.yml) [![Go Report Card](https://goreportcard.com/badge/github.com/jackvaughanjr/github2snipe)](https://goreportcard.com/report/github.com/jackvaughanjr/github2snipe) [![Downloads](https://img.shields.io/github/downloads/jackvaughanjr/github2snipe/total)](https://github.com/jackvaughanjr/github2snipe/releases)
+
 Sync active GitHub Enterprise or Organization members into [Snipe-IT](https://snipeitapp.com/) as license seat assignments.
 
 Supports both GitHub Enterprise (cloud) and standalone GitHub Organizations. Auth via a Personal Access Token (PAT). Runs fully headless — suitable for cron or CI.
