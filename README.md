@@ -294,6 +294,30 @@ exposed by the enterprise members API.
   addresses. For large enterprises (1,000+ members), allow a few minutes for the
   enrichment phase before Snipe-IT writes begin.
 
+## Running with snipemgr (automated scheduling)
+
+`github2snipe` can be scheduled via [snipemgr](https://github.com/jackvaughanjr/2snipe-manager), which manages installation, secret storage (GCP Secret Manager), and Cloud Run Job scheduling across all `*2snipe` integrations. A `Dockerfile` is included in this repo.
+
+Build and push the container image to Artifact Registry — choose one method:
+
+**Option A — Docker** (requires Docker installed and running):
+```bash
+gcloud auth configure-docker YOUR_REGION-docker.pkg.dev
+docker build -t YOUR_REGION-docker.pkg.dev/YOUR_PROJECT/snipe-integrations/github2snipe:latest .
+docker push YOUR_REGION-docker.pkg.dev/YOUR_PROJECT/snipe-integrations/github2snipe:latest
+```
+
+**Option B — Cloud Build** (no Docker required):
+```bash
+gcloud builds submit \
+  --tag YOUR_REGION-docker.pkg.dev/YOUR_PROJECT/snipe-integrations/github2snipe:latest \
+  --project=YOUR_PROJECT .
+```
+
+See the [snipemgr README](https://github.com/jackvaughanjr/2snipe-manager#building-container-images-for-cloud-run-jobs) for full GCP setup instructions (Artifact Registry repo creation, IAM, Cloud Scheduler).
+
+---
+
 ## Version History
 
 | Version | Key changes |
