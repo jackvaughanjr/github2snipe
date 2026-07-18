@@ -1,0 +1,6 @@
+# Run `pre-commit install` per clone so this fires on commit.
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.2
+    hooks:
+      - id: gitleaks
